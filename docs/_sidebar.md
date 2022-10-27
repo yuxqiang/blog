@@ -11,7 +11,7 @@
     * [mybatis一级缓存](framework/mybatisSession.md)
     * [mybatis二级缓存](framework/mybatisSession.md)
   * nacos
-    * [nacos注册中心](framework/mybatis.md)
+    * [nacos注册中心](framework/nacos.md)
     * [nacosp配置中心](framework/nacoosConfig.md)
     * [mybatis二级缓存](framework/mybatisSession.md)
   * [主题](zh-cn/themes.md)
