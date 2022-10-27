@@ -10,6 +10,10 @@
     * [mybatis主流程](framework/mybatis.md)
     * [mybatis一级缓存](framework/mybatisSession.md)
     * [mybatis二级缓存](framework/mybatisSession.md)
+  * nacos
+    * [nacos注册中心](framework/mybatis.md)
+    * [nacosp配置中心](framework/nacoosConfig.md)
+    * [mybatis二级缓存](framework/mybatisSession.md)
   * [主题](zh-cn/themes.md)
   * [使用插件](zh-cn/plugins.md)
   * [Markdown 配置](zh-cn/markdown.md)
