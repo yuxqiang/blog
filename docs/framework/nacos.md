@@ -31,6 +31,98 @@ Map的Key值为Cluster的名字，Value为Cluster对象，Cluster对象中有两
 注意：Nacos目前持久化存储的方式采用的是本地文件存储的方式。
 
 ### 客户端注册流程如下
+1.基于client-server注册模式 整合springcloud集成nacos注册中心是使用这种注册流程的
+
+nacos-client--------》nacos-server 通过http请求代码如下
+``` java
+//com.alibaba.nacos.client.naming.NacosNamingService 核心方法注册实例信息
+   public void registerInstance(String serviceName, String groupName, Instance instance) throws NacosException {
+        String groupedServiceName = NamingUtils.getGroupedName(serviceName, groupName);
+        if (instance.isEphemeral()) {
+           //判断是否临时实例 临时实例添加心跳检测线程任务
+            BeatInfo beatInfo = this.beatReactor.buildBeatInfo(groupedServiceName, instance);
+            this.beatReactor.addBeatInfo(groupedServiceName, beatInfo);
+        }
+
+        this.serverProxy.registerService(groupedServiceName, groupName, instance);
+    }
+```
+接下来查看serverProxy这个类 具体如下所示
+``` java
+//主要功能是拼接请求参数去请求 nacos-server 的接口
+public void registerService(String serviceName, String groupName, Instance instance) throws NacosException {
+        LogUtils.NAMING_LOGGER.info("[REGISTER-SERVICE] {} registering service {} with instance: {}", new Object[]{this.namespaceId, serviceName, instance});
+        Map<String, String> params = new HashMap(16);
+        params.put("namespaceId", this.namespaceId);
+        params.put("serviceName", serviceName);
+        params.put("groupName", groupName);
+        params.put("clusterName", instance.getClusterName());
+        params.put("ip", instance.getIp());
+        params.put("port", String.valueOf(instance.getPort()));
+        params.put("weight", String.valueOf(instance.getWeight()));
+        params.put("enable", String.valueOf(instance.isEnabled()));
+        params.put("healthy", String.valueOf(instance.isHealthy()));
+        params.put("ephemeral", String.valueOf(instance.isEphemeral()));
+        params.put("metadata", JacksonUtils.toJson(instance.getMetadata()));
+        this.reqApi(UtilAndComs.nacosUrlInstance, params, "POST");
+    }
+```
+接下来我们看reqApi这个方法
+```java
+// 这是客户端请求nacos-server核心代码 
+public String reqApi(String api, Map<String, String> params, Map<String, String> body, List<String> servers,String method) throws NacosException {
+
+        params.put(CommonParams.NAMESPACE_ID, getNamespaceId());
+        if (CollectionUtils.isEmpty(servers) && StringUtils.isBlank(nacosDomain)) {
+        throw new NacosException(NacosException.INVALID_PARAM, "no server available");
+        }
+
+        NacosException exception = new NacosException();
+
+        //如果是单个注册中心走这里
+        if (StringUtils.isNotBlank(nacosDomain)) {
+        for (int i = 0; i < maxRetry; i++) {//默认重试三次
+        try {
+        return callServer(api, params, body, nacosDomain, method);
+        } catch (NacosException e) {
+        exception = e;
+        if (NAMING_LOGGER.isDebugEnabled()) {
+        NAMING_LOGGER.debug("request {} failed.", nacosDomain, e);
+        }
+        }
+        }
+        } else {  //如果是多个注册中心走这里 配置了多个注册中心
+        Random random = new Random(System.currentTimeMillis());
+        int index = random.nextInt(servers.size());
+
+        for (int i = 0; i < servers.size(); i++) {
+        String server = servers.get(index);
+        try {
+        return callServer(api, params, body, server, method);
+        } catch (NacosException e) {
+        exception = e;
+        if (NAMING_LOGGER.isDebugEnabled()) {
+        NAMING_LOGGER.debug("request {} failed.", server, e);
+        }
+        }
+        index = (index + 1) % servers.size();
+        }
+        }
+
+        NAMING_LOGGER.error("request: {} failed, servers: {}, code: {}, msg: {}", api, servers, exception.getErrCode(),
+        exception.getErrMsg());
+
+        throw new NacosException(exception.getErrCode(),
+        "failed to req API:" + api + " after all servers(" + servers + ") tried: " + exception.getMessage());
+
+        }
+```
+以上就是clien的注册流程结束了 接下来我们查看一下nacos-server端代码
+
+
+
+
+
 
 
 
