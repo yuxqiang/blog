@@ -117,8 +117,64 @@ public String reqApi(String api, Map<String, String> params, Map<String, String>
 
         }
 ```
-以上就是clien的注册流程结束了 接下来我们查看一下nacos-server端代码
+以上就是nacos-clien的注册流程结束了 接下来我们查看一下nacos-server端代码
+``` java
+//com.alibaba.nacos.naming.controllers.InstanceController#register。
+    @CanDistro
+    @PostMapping
+    @Secured(parser = NamingResourceParser.class, action = ActionTypes.WRITE)
+    public String register(HttpServletRequest request) throws Exception {
+        final String namespaceId = WebUtils
+                .optional(request, CommonParams.NAMESPACE_ID, Constants.DEFAULT_NAMESPACE_ID);
+        final String serviceName = WebUtils.required(request, CommonParams.SERVICE_NAME);
+        NamingUtils.checkServiceNameFormat(serviceName);
+        final Instance instance = parseInstance(request);
+        serviceManager.registerInstance(namespaceId, serviceName, instance);
+        return "ok";
+    }
+```
+提供注册接口看一下注册的实例流程registerInstance的方法
+``` java
+//创建一个空服务 通过服务名称和namespace获取一个服务 因为 注册表的结构是 Map(namespace, Map(group::serviceName, Service))这种形式的
+ public void registerInstance(String namespaceId, String serviceName, Instance instance) throws NacosException {
+        
+        createEmptyService(namespaceId, serviceName, instance.isEphemeral());
+        
+        Service service = getService(namespaceId, serviceName);
+        
+        if (service == null) {
+            throw new NacosException(NacosException.INVALID_PARAM,
+                    "service not found, namespace: " + namespaceId + ", service: " + serviceName);
+        }
+        
+        addInstance(namespaceId, serviceName, instance.isEphemeral(), instance);
+    }
+```
+接下来查看一下添加实例的方法。代码如下
+``` java
+public void addInstance(String namespaceId, String serviceName, boolean ephemeral, Instance... ips)
+throws NacosException {
 
+        String key = KeyBuilder.buildInstanceListKey(namespaceId, serviceName, ephemeral);
+        
+        Service service = getService(namespaceId, serviceName);
+        
+        //锁定service不允许修改防止并发修改
+        synchronized (service) {
+            List<Instance> instanceList = addIpAddresses(service, ephemeral, ips);
+            Instances instances = new Instances();
+            instances.setInstanceList(instanceList);
+            同步到其他的机器
+            consistencyService.put(key, instances);
+        }
+    }
+```
+此时已经完成更新注册表的信息
+
+### 客户端服务发现流程
+
+
+### 服务端服务发现流程逻辑
 
 
 
