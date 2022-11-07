@@ -175,6 +175,111 @@ throws NacosException {
 在spring.factories中配置了一个NacosDiscoveryClientConfiguration类，此类向Spring中注入了一个NacosWatch类,这类的类图如下：
 ![Alt](picture/img.png)
 从上图可以看出，此类实现了Lifecycle接口，这个接口是Spring设计的生命周期接口，如果实现这个接口，那么就会在Spring加载完所有的Bean并初始化之后就会回调start()方法，在这个方法中完成了服务的拉取并更新到本地缓存，代码如下：
+```java
+ public void start() {
+        if (this.running.compareAndSet(false, true)) {
+            EventListener eventListener = (EventListener)this.listenerMap.computeIfAbsent(this.buildKey(), (event) -> {
+                return new EventListener() {
+                    public void onEvent(Event event) {
+                        if (event instanceof NamingEvent) {
+                            List instances = ((NamingEvent)event).getInstances();
+                            Optional instanceOptional = NacosWatch.this.selectCurrentInstance(instances);
+                            instanceOptional.ifPresent((currentInstance) -> {
+                                NacosWatch.this.resetIfNeeded(currentInstance);
+                            });
+                            NacosWatch.this.publisher.publishEvent(new HeartbeatEvent(NacosWatch.this, NacosWatch.this.nacosWatchIndex.getAndIncrement()));
+                        }
+
+                    }
+                };
+            });
+            NamingService namingService = this.nacosServiceManager.getNamingService(this.properties.getNacosProperties());
+
+            try {
+                namingService.subscribe(this.properties.getService(), this.properties.getGroup(), Arrays.asList(this.properties.getClusterName()), eventListener);
+            } catch (Exception var4) {
+                log.error("namingService subscribe failed, properties:{}", this.properties, var4);
+            }
+        }
+
+    }
+
+
+public ServiceInfo getServiceInfo(String serviceName, String clusters) {
+        LogUtils.NAMING_LOGGER.debug("failover-mode: " + this.failoverReactor.isFailoverSwitch());
+        String key = ServiceInfo.getKey(serviceName, clusters);
+        if (this.failoverReactor.isFailoverSwitch()) {
+        return this.failoverReactor.getService(key);
+        } else {
+        ServiceInfo serviceObj = this.getServiceInfo0(serviceName, clusters);
+        if (null == serviceObj) {
+        serviceObj = new ServiceInfo(serviceName, clusters);
+        this.serviceInfoMap.put(serviceObj.getKey(), serviceObj);
+        this.updatingMap.put(serviceName, new Object());
+        this.updateServiceNow(serviceName, clusters);
+        this.updatingMap.remove(serviceName);
+        } else if (this.updatingMap.containsKey(serviceName)) {
+synchronized(serviceObj) {
+        try {
+        serviceObj.wait(5000L);
+        } catch (InterruptedException var8) {
+        LogUtils.NAMING_LOGGER.error("[getServiceInfo] serviceName:" + serviceName + ", clusters:" + clusters, var8);
+        }
+        }
+        }
+
+        this.scheduleUpdateIfAbsent(serviceName, clusters);
+        return (ServiceInfo)this.serviceInfoMap.get(serviceObj.getKey());
+        }
+        }
+
+
+public void updateServiceNow(String serviceName, String clusters) {
+        ServiceInfo oldService = this.getServiceInfo0(serviceName, clusters);
+        boolean var15 = false;
+
+        label121: {
+        try {
+        var15 = true;
+        String result = this.serverProxy.queryList(serviceName, clusters, this.pushReceiver.getUdpPort(), false);
+        if (StringUtils.isNotEmpty(result)) {
+        this.processServiceJson(result);
+        var15 = false;
+        } else {
+        var15 = false;
+        }
+        break label121;
+        } catch (Exception var19) {
+        LogUtils.NAMING_LOGGER.error("[NA] failed to update serviceName: " + serviceName, var19);
+        var15 = false;
+        } finally {
+        if (var15) {
+        if (oldService != null) {
+synchronized(oldService) {
+        oldService.notifyAll();
+        }
+        }
+
+        }
+        }
+
+        if (oldService != null) {
+synchronized(oldService) {
+        oldService.notifyAll();
+        }
+        }
+
+        return;
+        }
+
+        if (oldService != null) {
+synchronized(oldService) {
+        oldService.notifyAll();
+        }
+        }
+
+        }
+```
 ### 服务端服务发现流程逻辑
 服务端提供的接口为/nacos/v1/ns/instance/list
 com.alibaba.nacos.naming.controllers.InstanceController#list
