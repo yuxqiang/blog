@@ -164,17 +164,46 @@ throws NacosException {
             List<Instance> instanceList = addIpAddresses(service, ephemeral, ips);
             Instances instances = new Instances();
             instances.setInstanceList(instanceList);
-            同步到其他的机器
+            //同步到其他的机器 todo下次分析同步数据到其他集群
             consistencyService.put(key, instances);
         }
     }
 ```
-此时已经完成更新注册表的信息
+此时已经完成更新注册表的信息 服务端注册服务信息更新服务到此结束。
 
 ### 客户端服务发现流程
-
-
+在spring.factories中配置了一个NacosDiscoveryClientConfiguration类，此类向Spring中注入了一个NacosWatch类,这类的类图如下：
+![Alt](picture/img.png)
+从上图可以看出，此类实现了Lifecycle接口，这个接口是Spring设计的生命周期接口，如果实现这个接口，那么就会在Spring加载完所有的Bean并初始化之后就会回调start()方法，在这个方法中完成了服务的拉取并更新到本地缓存，代码如下：
 ### 服务端服务发现流程逻辑
+服务端提供的接口为/nacos/v1/ns/instance/list
+com.alibaba.nacos.naming.controllers.InstanceController#list
+``` java
+    @GetMapping("/list")
+    @Secured(parser = NamingResourceParser.class, action = ActionTypes.READ)
+    public ObjectNode list(HttpServletRequest request) throws Exception {
+        String namespaceId = WebUtils.optional(request, CommonParams.NAMESPACE_ID, Constants.DEFAULT_NAMESPACE_ID);
+        String serviceName = WebUtils.required(request, CommonParams.SERVICE_NAME);
+        NamingUtils.checkServiceNameFormat(serviceName);
+        
+        String agent = WebUtils.getUserAgent(request);
+        String clusters = WebUtils.optional(request, "clusters", StringUtils.EMPTY);
+        String clientIP = WebUtils.optional(request, "clientIP", StringUtils.EMPTY);
+        int udpPort = Integer.parseInt(WebUtils.optional(request, "udpPort", "0"));
+        String env = WebUtils.optional(request, "env", StringUtils.EMPTY);
+        boolean isCheck = Boolean.parseBoolean(WebUtils.optional(request, "isCheck", "false"));
+        
+        String app = WebUtils.optional(request, "app", StringUtils.EMPTY);
+        
+        String tenant = WebUtils.optional(request, "tid", StringUtils.EMPTY);
+        
+        boolean healthyOnly = Boolean.parseBoolean(WebUtils.optional(request, "healthyOnly", "false"));
+        
+        return doSrvIpxt(namespaceId, serviceName, agent, clusters, clientIP, udpPort, env, isCheck, app, tenant,
+                healthyOnly);
+    }
+```
+
 
 
 
