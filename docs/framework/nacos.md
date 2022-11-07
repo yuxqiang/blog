@@ -205,81 +205,188 @@ throws NacosException {
     }
 
 
-public ServiceInfo getServiceInfo(String serviceName, String clusters) {
-        LogUtils.NAMING_LOGGER.debug("failover-mode: " + this.failoverReactor.isFailoverSwitch());
-        String key = ServiceInfo.getKey(serviceName, clusters);
-        if (this.failoverReactor.isFailoverSwitch()) {
-        return this.failoverReactor.getService(key);
-        } else {
-        ServiceInfo serviceObj = this.getServiceInfo0(serviceName, clusters);
-        if (null == serviceObj) {
-        serviceObj = new ServiceInfo(serviceName, clusters);
-        this.serviceInfoMap.put(serviceObj.getKey(), serviceObj);
-        this.updatingMap.put(serviceName, new Object());
-        this.updateServiceNow(serviceName, clusters);
-        this.updatingMap.remove(serviceName);
-        } else if (this.updatingMap.containsKey(serviceName)) {
-synchronized(serviceObj) {
-        try {
-        serviceObj.wait(5000L);
-        } catch (InterruptedException var8) {
-        LogUtils.NAMING_LOGGER.error("[getServiceInfo] serviceName:" + serviceName + ", clusters:" + clusters, var8);
-        }
-        }
-        }
-
-        this.scheduleUpdateIfAbsent(serviceName, clusters);
-        return (ServiceInfo)this.serviceInfoMap.get(serviceObj.getKey());
-        }
-        }
-
-
-public void updateServiceNow(String serviceName, String clusters) {
-        ServiceInfo oldService = this.getServiceInfo0(serviceName, clusters);
-        boolean var15 = false;
-
-        label121: {
-        try {
-        var15 = true;
-        String result = this.serverProxy.queryList(serviceName, clusters, this.pushReceiver.getUdpPort(), false);
-        if (StringUtils.isNotEmpty(result)) {
-        this.processServiceJson(result);
-        var15 = false;
-        } else {
-        var15 = false;
-        }
-        break label121;
-        } catch (Exception var19) {
-        LogUtils.NAMING_LOGGER.error("[NA] failed to update serviceName: " + serviceName, var19);
-        var15 = false;
-        } finally {
-        if (var15) {
-        if (oldService != null) {
-synchronized(oldService) {
-        oldService.notifyAll();
-        }
-        }
-
-        }
-        }
-
-        if (oldService != null) {
-synchronized(oldService) {
-        oldService.notifyAll();
-        }
-        }
-
-        return;
-        }
-
-        if (oldService != null) {
-synchronized(oldService) {
-        oldService.notifyAll();
-        }
-        }
-
-        }
 ```
+```java
+#com.alibaba.nacos.client.naming.core.HostReactor #getServiceInfo
+//获取服务的信息
+ public ServiceInfo getServiceInfo(final String serviceName, final String clusters) {
+        
+        NAMING_LOGGER.debug("failover-mode: " + failoverReactor.isFailoverSwitch());
+        String key = ServiceInfo.getKey(serviceName, clusters);
+        if (failoverReactor.isFailoverSwitch()) {
+            return failoverReactor.getService(key);
+        }
+        //先从本地缓存获取服务信息
+        ServiceInfo serviceObj = getServiceInfo0(serviceName, clusters);
+        
+        if (null == serviceObj) {
+            serviceObj = new ServiceInfo(serviceName, clusters);
+            
+            serviceInfoMap.put(serviceObj.getKey(), serviceObj);
+            
+            updatingMap.put(serviceName, new Object());
+            updateServiceNow(serviceName, clusters);
+            updatingMap.remove(serviceName);
+            
+        } else if (updatingMap.containsKey(serviceName)) {
+            
+            if (UPDATE_HOLD_INTERVAL > 0) {
+                // hold a moment waiting for update finish
+                synchronized (serviceObj) {
+                    try {
+                        serviceObj.wait(UPDATE_HOLD_INTERVAL);
+                    } catch (InterruptedException e) {
+                        NAMING_LOGGER
+                                .error("[getServiceInfo] serviceName:" + serviceName + ", clusters:" + clusters, e);
+                    }
+                }
+            }
+        }
+        
+        scheduleUpdateIfAbsent(serviceName, clusters);
+        
+        return serviceInfoMap.get(serviceObj.getKey());
+    }
+
+```
+`````java
+//更新服务信息
+ private void updateServiceNow(String serviceName, String clusters) {
+        try {
+            updateService(serviceName, clusters);
+        } catch (NacosException e) {
+            NAMING_LOGGER.error("[NA] failed to update serviceName: " + serviceName, e);
+        }
+    }
+`````
+
+`````java
+ /**
+     * Update service now.
+     *
+     * @param serviceName service name
+     * @param clusters    clusters
+     */
+    public void updateService(String serviceName, String clusters) throws NacosException {
+        ServiceInfo oldService = getServiceInfo0(serviceName, clusters);
+        try {
+            //请求list获取服务数据穿了一个udp端口nacosServer接收到service修改 第一时间通过udp通知订阅者
+            String result = serverProxy.queryList(serviceName, clusters, pushReceiver.getUdpPort(), false);
+            
+            if (StringUtils.isNotEmpty(result)) {
+                processServiceJson(result);
+            }
+        } finally {
+            if (oldService != null) {
+                synchronized (oldService) {
+                    oldService.notifyAll();
+                }
+            }
+        }
+    }
+    
+`````
+````java
+ /**
+     * Schedule update if absent.
+     *
+     * @param serviceName service name
+     * @param clusters    clusters
+     */
+    public void scheduleUpdateIfAbsent(String serviceName, String clusters) {
+        if (futureMap.get(ServiceInfo.getKey(serviceName, clusters)) != null) {
+            return;
+        }
+        
+        synchronized (futureMap) {
+            if (futureMap.get(ServiceInfo.getKey(serviceName, clusters)) != null) {
+                return;
+            }
+            
+            ScheduledFuture<?> future = addTask(new UpdateTask(serviceName, clusters));
+            futureMap.put(ServiceInfo.getKey(serviceName, clusters), future);
+        }
+    }
+````
+从源码可以看出最后也是调用了serverProxy.queryList方法，这个方法也是发起了一个HTTP的请求，调用了Nacos Server的/nacos/v1/ns/instance/list接口，进行服务拉取。
+到这里已经从源码级别分析了Spring Cloud的集成了Nacos客户端关于服务拉取的代码，其实代码还是比较简单的，总结来说就是构造出list接口需要的参数，然后发起HTTP请求，进行服务拉取。
+从源码中注意留意一个scheduleUpdateIfAbsent方法的调用，这里提交了一个UpdateTask任务，UpdateTask是一个实现了Runnable接口的类，主要代码如下：
+````java
+ public class UpdateTask implements Runnable {
+        
+        long lastRefTime = Long.MAX_VALUE;
+        
+        private final String clusters;
+        
+        private final String serviceName;
+        
+        /**
+         * the fail situation. 1:can't connect to server 2:serviceInfo's hosts is empty
+         */
+        private int failCount = 0;
+        
+        public UpdateTask(String serviceName, String clusters) {
+            this.serviceName = serviceName;
+            this.clusters = clusters;
+        }
+        
+        private void incFailCount() {
+            int limit = 6;
+            if (failCount == limit) {
+                return;
+            }
+            failCount++;
+        }
+        
+        private void resetFailCount() {
+            failCount = 0;
+        }
+        
+        @Override
+        public void run() {
+            long delayTime = DEFAULT_DELAY;
+            
+            try {
+                ServiceInfo serviceObj = serviceInfoMap.get(ServiceInfo.getKey(serviceName, clusters));
+                
+                if (serviceObj == null) {
+                    updateService(serviceName, clusters);
+                    return;
+                }
+                
+                if (serviceObj.getLastRefTime() <= lastRefTime) {
+                    updateService(serviceName, clusters);
+                    serviceObj = serviceInfoMap.get(ServiceInfo.getKey(serviceName, clusters));
+                } else {
+                    // if serviceName already updated by push, we should not override it
+                    // since the push data may be different from pull through force push
+                    refreshOnly(serviceName, clusters);
+                }
+                
+                lastRefTime = serviceObj.getLastRefTime();
+                
+                if (!notifier.isSubscribed(serviceName, clusters) && !futureMap
+                        .containsKey(ServiceInfo.getKey(serviceName, clusters))) {
+                    // abort the update task
+                    NAMING_LOGGER.info("update task is stopped, service:" + serviceName + ", clusters:" + clusters);
+                    return;
+                }
+                if (CollectionUtils.isEmpty(serviceObj.getHosts())) {
+                    incFailCount();
+                    return;
+                }
+                delayTime = serviceObj.getCacheMillis();
+                resetFailCount();
+            } catch (Throwable e) {
+                incFailCount();
+                NAMING_LOGGER.warn("[NA] failed to update serviceName: " + serviceName, e);
+            } finally {
+                executor.schedule(this, Math.min(delayTime << failCount, DEFAULT_DELAY * 60), TimeUnit.MILLISECONDS);
+            }
+        }
+    }
+````
+从源码中可以看出，这段代码相当于定时10s（这个时间是从/nacos/v1/ns/instance/list接口里回传回来的）拉取一次服务，这里有个Nacos Server比较巧妙的设计需要提一下，在updateServiceNow方法中可以看到调用服务端/nacos/v1/ns/instance/list接口的时候传入了一个Udp的端口，这个端口的作用是如果Nacos Server感知到Service的变化，就会把变化信息通知给订阅了这个Service信息的客户端。
 ### 服务端服务发现流程逻辑
 服务端提供的接口为/nacos/v1/ns/instance/list
 com.alibaba.nacos.naming.controllers.InstanceController#list
