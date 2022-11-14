@@ -230,5 +230,449 @@ Feign上下文的构建#
         new HardCodedTarget<>(this.type, this.name, url));
         }
 ```
+两个关键的对象说明：
+FeignContext是全局唯一的上下文，它继承了NamedContextFactory，它是用来来统一维护feign中各个feign客户端相互隔离的上下文，FeignContext注册到容器是在FeignAutoConfiguration上完成的，代码如下！
+```java
+@Autowired(required = false)
+private List<FeignClientSpecification> configurations = new ArrayList<>();
+	@Bean
+	public FeignContext feignContext() {
+		FeignContext context = new FeignContext();
+		context.setConfigurations(this.configurations);
+		return context;
+	}
+```
+在初始化FeignContext时，会把configurations放入到FeignContext中。configurations表示当前被扫描到的所有@FeignClient。
 
+Feign.Builder用来构建Feign对象，基于builder实现上下文信息的构建，代码如下
+```java
+protected Feign.Builder feign(FeignContext context) {
+		FeignLoggerFactory loggerFactory = get(context, FeignLoggerFactory.class);
+		Logger logger = loggerFactory.create(this.type);
 
+		// @formatter:off
+		Feign.Builder builder = get(context, Feign.Builder.class)
+				// required values
+				.logger(logger)
+				.encoder(get(context, Encoder.class))
+				.decoder(get(context, Decoder.class))
+				.contract(get(context, Contract.class));
+		// @formatter:on
+
+		configureFeign(context, builder);
+
+		return builder;
+	}
+```
+从代码中可以看到，feign方法，主要是针对不同的服务提供者生成Feign的上下文信息，比如logger、encoder、decoder等。因此，从这个分析过程中，我们不难猜测到它的原理结构，如下图所示
+![Alt](picture/img_1.png)
+父子容器隔离的实现方式如下，当调用get方法时，会从context中去获取指定type的实例对象。
+```java
+protected <T> T get(FeignContext context, Class<T> type) {
+    T instance = context.getInstance(contextId, type);
+    if (instance == null) {
+        throw new IllegalStateException(
+            "No bean found of type " + type + " for " + contextId);
+    }
+    return instance;
+}
+```
+接着，调用NamedContextFactory中的getInstance方法。
+```java
+//NamedContextFactory.java
+public <T> T getInstance(String name, Class<T> type) {
+    //根据`name`获取容器上下文
+    AnnotationConfigApplicationContext context = this.getContext(name);
+    try {
+        //再从容器上下文中获取指定类型的bean。
+        return context.getBean(type);
+    } catch (NoSuchBeanDefinitionException var5) {
+        return null;
+    }
+}
+```
+getContext方法根据name从contexts容器中获得上下文对象，如果没有，则调用createContext创建。
+```java
+protected AnnotationConfigApplicationContext getContext(String name) {
+    if (!this.contexts.containsKey(name)) {
+        synchronized(this.contexts) {
+            if (!this.contexts.containsKey(name)) {
+                this.contexts.put(name, this.createContext(name));
+            }
+        }
+    }
+
+    return (AnnotationConfigApplicationContext)this.contexts.get(name);
+}
+```
+### 生成动态代理
+第二个部分，如果@FeignClient注解中，没有配置url，也就是不走绝对请求路径，则执行下面这段逻辑。
+由于我们在@FeignClient注解中使用的是name，所以需要执行负载均衡策略的分支逻辑。
+```java
+<T> T getTarget() {
+    //省略.....
+     if (!StringUtils.hasText(url)) { //是@FeignClient中的一个属性，可以定义请求的绝对URL
+
+      if (LOG.isInfoEnabled()) {
+         LOG.info("For '" + name
+               + "' URL not provided. Will try picking an instance via load-balancing.");
+      }
+      if (!name.startsWith("http")) {
+         url = "http://" + name;
+      }
+      else {
+         url = name;
+      }
+      url += cleanPath();
+      //
+      return (T) loadBalance(builder, context,
+            new HardCodedTarget<>(type, name, url));
+   }
+    //省略....
+}
+```
+loadBalance方法的代码实现如下，其中Client是Spring Boot自动装配的时候实现的，如果替换了其他的http协议框架，则client则对应为配置的协议api
+```java
+protected <T> T loadBalance(Feign.Builder builder, FeignContext context,
+			HardCodedTarget<T> target) {
+		//具体看FeignRibbonClientAutoConfiguration 装配了
+		//HttpClientFeignLoadBalancedConfiguration.class,
+		//OkHttpFeignLoadBalancedConfiguration.class,
+		//DefaultFeignLoadBalancedConfiguration 默认这个
+		//Feign发送请求以及接受响应的http client，默认是Client.Default的实现，可以修改成OkHttp、HttpClient等。
+		Client client = getOptional(context, Client.class);
+		if (client != null) {
+			builder.client(client);
+			//针对当前Feign客户端，设置网络通信的client
+			//targeter表示HystrixTarger实例，因为Feign可以集成Hystrix实现熔断，所以这里会一层包装
+			Targeter targeter = get(context, Targeter.class);
+			return targeter.target(this, builder, context, target);
+		}
+
+		throw new IllegalStateException(
+				"No Feign Client for loadBalancing defined. Did you forget to include spring-cloud-starter-netflix-ribbon?");
+	}
+```
+HystrixTarget.target代码如下，我们没有集成Hystrix，因此不会触发Hystrix相关的处理逻辑
+```java
+@Override
+	public <T> T target(FeignClientFactoryBean factory, Feign.Builder feign,
+			FeignContext context, Target.HardCodedTarget<T> target) {
+		if (!(feign instanceof feign.hystrix.HystrixFeign.Builder)) {
+			//没有配置服务降级走着部分逻辑
+			return feign.target(target);
+		}
+		feign.hystrix.HystrixFeign.Builder builder = (feign.hystrix.HystrixFeign.Builder) feign;
+		String name = StringUtils.isEmpty(factory.getContextId()) ? factory.getName()
+				: factory.getContextId();
+		SetterFactory setterFactory = getOptional(name, context, SetterFactory.class);
+		if (setterFactory != null) {
+			builder.setterFactory(setterFactory);
+		}
+		Class<?> fallback = factory.getFallback();
+		if (fallback != void.class) {
+			return targetWithFallback(name, context, target, builder, fallback);
+		}
+		Class<?> fallbackFactory = factory.getFallbackFactory();
+		if (fallbackFactory != void.class) {
+			return targetWithFallbackFactory(name, context, target, builder,
+					fallbackFactory);
+		}
+
+		return feign.target(target);
+	}
+```
+进入到Feign.target方法，代码如下。
+```java
+//Feign.java
+public <T> T target(Target<T> target) {
+    return this.build().newInstance(target);  //target.HardCodedTarget
+}
+
+public Feign build() {
+    //这里会构建一个LoadBalanceClient
+    Client client = (Client)Capability.enrich(this.client, this.capabilities);
+    Retryer retryer = (Retryer)Capability.enrich(this.retryer, this.capabilities);
+    List<RequestInterceptor> requestInterceptors = (List)this.requestInterceptors.stream().map((ri) -> {
+        return (RequestInterceptor)Capability.enrich(ri, this.capabilities);
+    }).collect(Collectors.toList());
+    //OpenFeign Log配置
+    Logger logger = (Logger)Capability.enrich(this.logger, this.capabilities);
+    //模版解析协议（这个接口非常重要：它决定了哪些注解可以标注在接口/接口方法上是有效的，并且提取出有效的信息，组装成为MethodMetadata元信息。）
+    Contract contract = (Contract)Capability.enrich(this.contract, this.capabilities);
+    //封装Request请求的 连接超时=默认10s ，读取超时=默认60
+    Options options = (Options)Capability.enrich(this.options, this.capabilities);
+    //编码器
+    Encoder encoder = (Encoder)Capability.enrich(this.encoder, this.capabilities);
+    //解码器
+    Decoder decoder = (Decoder)Capability.enrich(this.decoder, this.capabilities);
+    
+    InvocationHandlerFactory invocationHandlerFactory = (InvocationHandlerFactory)Capability.enrich(this.invocationHandlerFactory, this.capabilities);
+    QueryMapEncoder queryMapEncoder = (QueryMapEncoder)Capability.enrich(this.queryMapEncoder, this.capabilities);
+    //synchronousMethodHandlerFactory， 同步方法调用处理器（很重要，后续要用到）
+    Factory synchronousMethodHandlerFactory = new Factory(client, retryer, requestInterceptors, logger, this.logLevel, this.decode404, this.closeAfterDecode, this.propagationPolicy, this.forceDecoding);
+    //ParseHandlersByName的作用就是我们传入Target（封装了我们的模拟接口，要访问的域名），返回这个接口下的各个方法，对应的执行HTTP请求需要的一系列信息
+    ParseHandlersByName handlersByName = new ParseHandlersByName(contract, options, encoder, decoder, queryMapEncoder, this.errorDecoder, synchronousMethodHandlerFactory);
+    
+    return new ReflectiveFeign(handlersByName, invocationHandlerFactory, queryMapEncoder);
+}
+```
+build方法中，返回了一个ReflectiveFeign的实例对象，先来看ReflectiveFeign中的newInstance方法。
+```java
+@Override
+  public <T> T newInstance(Target<T> target) {
+        //修饰了@FeignClient注解的接口方法封装成方法处理器，把指定的target进行解析，得到需要处理的方法集合。
+    Map<String, MethodHandler> nameToHandler = targetToHandlersByName.apply(target);
+        //定义一个用来保存需要处理的方法的集合 
+    Map<Method, MethodHandler> methodToHandler = new LinkedHashMap<Method, MethodHandler>();
+        //JDK8以后，接口允许默认方法实现，这里是对默认方法进行封装处理。 
+    List<DefaultMethodHandler> defaultMethodHandlers = new LinkedList<DefaultMethodHandler>();
+//遍历@FeignClient接口的所有方法
+    for (Method method : target.type().getMethods()) {
+        //如果是Object中的方法，则直接跳过  
+      if (method.getDeclaringClass() == Object.class) {
+        continue;
+      } else if (Util.isDefault(method)) {
+        //如果是默认方法，则把该方法绑定一个DefaultMethodHandler。 
+        DefaultMethodHandler handler = new DefaultMethodHandler(method);
+        defaultMethodHandlers.add(handler);
+        methodToHandler.put(method, handler);
+      } else {
+        //否则，添加MethodHandler(SynchronousMethodHandler)。 
+        methodToHandler.put(method, nameToHandler.get(Feign.configKey(target.type(), method)));
+      }
+    }
+        //创建动态代理类。 
+    InvocationHandler handler = factory.create(target, methodToHandler);
+    T proxy = (T) Proxy.newProxyInstance(target.type().getClassLoader(),
+        new Class<?>[] {target.type()}, handler);
+
+    for (DefaultMethodHandler defaultMethodHandler : defaultMethodHandlers) {
+      defaultMethodHandler.bindTo(proxy);
+    }
+    return proxy;
+  }
+```
+上述代码，其实也不难理解。
+
+解析@FeignClient接口声明的方法，根据不同方法绑定不同的处理器。
+默认方法，绑定DefaultMethodHandler
+远程方法，绑定SynchronousMethodHandler
+使用JDK提供的Proxy创建动态代理
+MethodHandler，会把方法参数、方法返回值、参数集合、请求类型、请求路径进行解析存储
+
+### FeignClient接口解析
+接口解析也是Feign很重要的一个逻辑，它能把接口声明的属性转化为HTTP通信的协议参数。
+执行逻辑RerlectiveFeign.newInstance
+```java
+ public Map<String, MethodHandler> apply(Target target) {
+      List<MethodMetadata> metadata = contract.parseAndValidateMetadata(target.type());
+      Map<String, MethodHandler> result = new LinkedHashMap<String, MethodHandler>();
+      for (MethodMetadata md : metadata) {
+        BuildTemplateByResolvingArgs buildTemplate;
+        if (!md.formParams().isEmpty() && md.template().bodyTemplate() == null) {
+          buildTemplate =
+              new BuildFormEncodedTemplateFromArgs(md, encoder, queryMapEncoder, target);
+        } else if (md.bodyIndex() != null) {
+          buildTemplate = new BuildEncodedTemplateFromArgs(md, encoder, queryMapEncoder, target);
+        } else {
+          buildTemplate = new BuildTemplateByResolvingArgs(md, queryMapEncoder, target);
+        }
+        if (md.isIgnored()) {
+          result.put(md.configKey(), args -> {
+            throw new IllegalStateException(md.configKey() + " is not a method handled by feign");
+          });
+        } else {
+          result.put(md.configKey(),
+              factory.create(target, md, buildTemplate, options, decoder, errorDecoder));
+        }
+      }
+      return result;
+    }
+  }
+```
+targetToHandlersByName.apply(target);会解析接口方法上的注解，从而解析出方法粒度的特定的配置信息，然后生产一个SynchronousMethodHandler
+然后需要维护一个<method，MethodHandler>的map，放入InvocationHandler的实现FeignInvocationHandler中。
+### 阶段性小结
+通过上述过程分析，被声明为@FeignClient注解的类，在被注入时，最终会生成一个动态代理对象FeignInvocationHandler。
+
+当触发方法调用时，会被FeignInvocationHandler#invoke拦截，FeignClientFactoryBean在实例化过程中所做的事情如下图所示。
+![Alt](picture/img_2.png)
+总结来说就几个点：
+
+1.解析Feign的上下文配置，针对当前的服务实例构建容器上下文并返回Feign对象
+2.Feign根据上下围配置把 log、encode、decoder、等配置项设置到Feign对象中
+3.对目标服务，使用LoadBalance以及Hystrix进行包装
+4.通过Contract协议，把FeignClient接口的声明，解析成MethodHandler
+5.遍历MethodHandler列表，针对需要远程通信的方法，设置SynchronousMethodHandler处理器，用来实现同步远程调用。
+6.使用JDK中的动态代理机制构建动态代理对象。
+### 远程通信的实现
+在Spring启动过程中，把一切的准备工作准备就绪后，就开始执行远程调用。
+
+在前面的分析中，我们知道OpenFeign最终返回的是一个#ReflectiveFeign.FeignInvocationHandler的对象。
+
+那么当客户端发起请求时，会进入到FeignInvocationHandler.invoke方法中，这个大家都知道，它是一个动态代理的实现。
+
+```java
+    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+      if ("equals".equals(method.getName())) {
+        try {
+          Object otherHandler =
+              args.length > 0 && args[0] != null ? Proxy.getInvocationHandler(args[0]) : null;
+          return equals(otherHandler);
+        } catch (IllegalArgumentException e) {
+          return false;
+        }
+      } else if ("hashCode".equals(method.getName())) {
+        return hashCode();
+      } else if ("toString".equals(method.getName())) {
+        return toString();
+      }
+
+      return dispatch.get(method).invoke(args);
+    }
+```
+接着，在invoke方法中，会调用this.dispatch.get(method)).invoke(args)。this.dispatch.get(method)会返回一个SynchronousMethodHandler,进行拦截处理。
+this.dispatch，其实就是在初始化过程中创建的，private final Map<Method, MethodHandler> dispatch;实例。
+#### SynchronousMethodHandler.invoke
+这个方法会根据参数生成完成的RequestTemplate对象，这个对象是Http请求的模版，代码如下，代码的实现如下：
+```java
+ @Override
+  public Object invoke(Object[] argv) throws Throwable {
+    RequestTemplate template = buildTemplateFromArgs.create(argv);
+    Options options = findOptions(argv);////获取配置项，连接超时时间、远程通信数据获取超时时间 
+    Retryer retryer = this.retryer.clone();//获取重试策略 
+    while (true) {
+      try {
+        return executeAndDecode(template, options);
+      } catch (RetryableException e) {
+        try {
+          retryer.continueOrPropagate(e);
+        } catch (RetryableException th) {
+          Throwable cause = th.getCause();
+          if (propagationPolicy == UNWRAP && cause != null) {
+            throw cause;
+          } else {
+            throw th;
+          }
+        }
+        if (logLevel != Logger.Level.NONE) {
+          logger.logRetry(metadata.configKey(), logLevel);
+        }
+        continue;
+      }
+    }
+  }
+```
+上述代码的执行流程中，需要先构造一个Request对象，然后调用client.execute方法执行网络通信请求，整体实现流程如下。
+![Alt](picture/img_3.png)
+
+##### executeAndDecode
+```java
+Object executeAndDecode(RequestTemplate template, Options options) throws Throwable {
+    Request request = targetRequest(template);//把template转化为请求报文
+
+    if (logLevel != Logger.Level.NONE) {
+      logger.logRequest(metadata.configKey(), logLevel, request);
+    }
+
+    Response response;
+    long start = System.nanoTime();
+    try {
+      //发起请求，此时client是LoadBalanceFeignClient，需要先对服务名称进行解析负载
+      response = client.execute(request, options);
+      // ensure the request is set. TODO: remove in Feign 12
+      response = response.toBuilder()
+          .request(request)
+          .requestTemplate(template)
+          .build();
+    } catch (IOException e) {
+      if (logLevel != Logger.Level.NONE) {
+        logger.logIOException(metadata.configKey(), logLevel, e, elapsedTime(start));
+      }
+      throw errorExecuting(request, e);
+    }
+    long elapsedTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+    //如果设置了解码器，这需要对响应数据做解码
+    if (decoder != null)
+      return decoder.decode(response, metadata.returnType());
+
+    CompletableFuture<Object> resultFuture = new CompletableFuture<>();
+    asyncResponseHandler.handleResponse(resultFuture, metadata.configKey(), response,
+        metadata.returnType(),
+        elapsedTime);
+
+    try {
+      if (!resultFuture.isDone())
+        throw new IllegalStateException("Response handling not done");
+
+      return resultFuture.join();
+    } catch (CompletionException e) {
+      Throwable cause = e.getCause();
+      if (cause != null)
+        throw cause;
+      throw e;
+    }
+  }
+```
+#### LoadBalanceClient
+
+```java
+@Override
+	public Response execute(Request request, Request.Options options) throws IOException {
+		//
+		final URI originalUri = URI.create(request.url());
+		String serviceId = originalUri.getHost();
+		Assert.state(serviceId != null,
+				"Request URI does not contain a valid hostname: " + originalUri);
+		ServiceInstance instance = loadBalancerClient.choose(serviceId);
+		if (instance == null) {
+			String message = "Load balancer does not contain an instance for the service "
+					+ serviceId;
+			if (LOG.isWarnEnabled()) {
+				LOG.warn(message);
+			}
+			return Response.builder().request(request)
+					.status(HttpStatus.SERVICE_UNAVAILABLE.value())
+					.body(message, StandardCharsets.UTF_8).build();
+		}
+		String reconstructedUrl = loadBalancerClient.reconstructURI(instance, originalUri)
+				.toString();
+		Request newRequest = Request.create(request.httpMethod(), reconstructedUrl,
+				request.headers(), request.body(), request.charset(),
+				request.requestTemplate());
+		return delegate.execute(newRequest, options);
+	}
+```
+```java
+@Override
+	public Response execute(Request request, Request.Options options) throws IOException {
+		try {
+			////获取请求uri，此时的地址还未被解析。
+			URI asUri = URI.create(request.url());
+			//获取host，实际上就是服务名称
+			String clientName = asUri.getHost();
+			URI uriWithoutHost = cleanUrl(request.url(), clientName);
+			////创建负载均衡客户端(FeignLoadBalancer)，执行请求
+			FeignLoadBalancer.RibbonRequest ribbonRequest = new FeignLoadBalancer.RibbonRequest(
+					this.delegate, request, uriWithoutHost);
+
+			IClientConfig requestConfig = getClientConfig(options, clientName);
+
+			return lbClient(clientName)
+					.executeWithLoadBalancer(ribbonRequest, requestConfig).toResponse();
+		}
+		catch (ClientException e) {
+			IOException io = findIOException(e);
+			if (io != null) {
+				throw io;
+			}
+			throw new RuntimeException(e);
+		}
+	}
+```
+从上面的代码可以看到，lbClient(clientName) 创建了一个负载均衡的客户端，它实际上就是生成的如下所述的类：
+```java
+public class FeignLoadBalancer extends		AbstractLoadBalancerAwareClient<FeignLoadBalancer.RibbonRequest, FeignLoadBalancer.RibbonResponse> {
+```
