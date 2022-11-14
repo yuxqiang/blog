@@ -661,6 +661,7 @@ Object executeAndDecode(RequestTemplate template, Options options) throws Throwa
 			IClientConfig requestConfig = getClientConfig(options, clientName);
 
 			return lbClient(clientName)
+        //核心方法取代服务名称换成ip端口
 					.executeWithLoadBalancer(ribbonRequest, requestConfig).toResponse();
 		}
 		catch (ClientException e) {
@@ -672,7 +673,219 @@ Object executeAndDecode(RequestTemplate template, Options options) throws Throwa
 		}
 	}
 ```
-从上面的代码可以看到，lbClient(clientName) 创建了一个负载均衡的客户端，它实际上就是生成的如下所述的类：
+从上面的代码可以看到，lbClient(clientName) 创建了一个负载均衡的客户端。
+上面的核心代码是executeWithLoadBalancer方法 查阅底层源码如下所示
 ```java
-public class FeignLoadBalancer extends		AbstractLoadBalancerAwareClient<FeignLoadBalancer.RibbonRequest, FeignLoadBalancer.RibbonResponse> {
+ public T executeWithLoadBalancer(final S request, final IClientConfig requestConfig) throws ClientException {
+        LoadBalancerCommand<T> command = this.buildLoadBalancerCommand(request, requestConfig);
+
+        try {
+            return (IResponse)command.submit(new ServerOperation<T>() {
+                public Observable<T> call(Server server) {
+                    URI finalUri = AbstractLoadBalancerAwareClient.this.reconstructURIWithServer(server, request.getUri());
+                    //最终返回一个服务地址
+                    S requestForServer = request.replaceUri(finalUri);
+
+                    try {
+                        return Observable.just(AbstractLoadBalancerAwareClient.this.execute(requestForServer, requestConfig));
+                    } catch (Exception var5) {
+                        return Observable.error(var5);
+                    }
+                }
+            }).toBlocking().single();
+        } catch (Exception var6) {
+            Throwable t = var6.getCause();
+            if (t instanceof ClientException) {
+                throw (ClientException)t;
+            } else {
+                throw new ClientException(var6);
+            }
+        }
+    }
 ```
+继续查看submit方法 如下图所示：
+```java
+ public Observable<T> submit(final ServerOperation<T> operation) {
+        final LoadBalancerCommand<T>.ExecutionInfoContext context = new ExecutionInfoContext();
+        if (this.listenerInvoker != null) {
+            try {
+                this.listenerInvoker.onExecutionStart();
+            } catch (ExecutionListener.AbortExecutionException var6) {
+                return Observable.error(var6);
+            }
+        }
+
+        final int maxRetrysSame = this.retryHandler.getMaxRetriesOnSameServer();
+        final int maxRetrysNext = this.retryHandler.getMaxRetriesOnNextServer();
+        //点击查看selectServer()方法核心
+        Observable<T> o = (this.server == null ? this.selectServer() : Observable.just(this.server)).concatMap(new Func1<Server, Observable<T>>() {
+            public Observable<T> call(Server server) {
+                context.setServer(server);
+                final ServerStats stats = LoadBalancerCommand.this.loadBalancerContext.getServerStats(server);
+                Observable<T> o = Observable.just(server).concatMap(new Func1<Server, Observable<T>>() {
+                    public Observable<T> call(final Server server) {
+                        context.incAttemptCount();
+                        LoadBalancerCommand.this.loadBalancerContext.noteOpenConnection(stats);
+                        if (LoadBalancerCommand.this.listenerInvoker != null) {
+                            try {
+                                LoadBalancerCommand.this.listenerInvoker.onStartWithServer(context.toExecutionInfo());
+                            } catch (ExecutionListener.AbortExecutionException var3) {
+                                return Observable.error(var3);
+                            }
+                        }
+
+                        final Stopwatch tracer = LoadBalancerCommand.this.loadBalancerContext.getExecuteTracer().start();
+                        return operation.call(server).doOnEach(new Observer<T>() {
+                            private T entity;
+
+                            public void onCompleted() {
+                                this.recordStats(tracer, stats, this.entity, (Throwable)null);
+                            }
+
+                            public void onError(Throwable e) {
+                                this.recordStats(tracer, stats, (Object)null, e);
+                                LoadBalancerCommand.logger.debug("Got error {} when executed on server {}", e, server);
+                                if (LoadBalancerCommand.this.listenerInvoker != null) {
+                                    LoadBalancerCommand.this.listenerInvoker.onExceptionWithServer(e, context.toExecutionInfo());
+                                }
+
+                            }
+
+                            public void onNext(T entity) {
+                                this.entity = entity;
+                                if (LoadBalancerCommand.this.listenerInvoker != null) {
+                                    LoadBalancerCommand.this.listenerInvoker.onExecutionSuccess(entity, context.toExecutionInfo());
+                                }
+
+                            }
+
+                            private void recordStats(Stopwatch tracerx, ServerStats statsx, Object entity, Throwable exception) {
+                                tracerx.stop();
+                                LoadBalancerCommand.this.loadBalancerContext.noteRequestCompletion(statsx, entity, exception, tracerx.getDuration(TimeUnit.MILLISECONDS), LoadBalancerCommand.this.retryHandler);
+                            }
+                        });
+                    }
+                });
+                if (maxRetrysSame > 0) {
+                    o = o.retry(LoadBalancerCommand.this.retryPolicy(maxRetrysSame, true));
+                }
+
+                return o;
+            }
+        });
+        if (maxRetrysNext > 0 && this.server == null) {
+            o = o.retry(this.retryPolicy(maxRetrysNext, false));
+        }
+
+        return o.onErrorResumeNext(new Func1<Throwable, Observable<T>>() {
+            public Observable<T> call(Throwable e) {
+                if (context.getAttemptCount() > 0) {
+                    if (maxRetrysNext > 0 && context.getServerAttemptCount() == maxRetrysNext + 1) {
+                        e = new ClientException(ErrorType.NUMBEROF_RETRIES_NEXTSERVER_EXCEEDED, "Number of retries on next server exceeded max " + maxRetrysNext + " retries, while making a call for: " + context.getServer(), (Throwable)e);
+                    } else if (maxRetrysSame > 0 && context.getAttemptCount() == maxRetrysSame + 1) {
+                        e = new ClientException(ErrorType.NUMBEROF_RETRIES_EXEEDED, "Number of retries exceeded max " + maxRetrysSame + " retries, while making a call for: " + context.getServer(), (Throwable)e);
+                    }
+                }
+
+                if (LoadBalancerCommand.this.listenerInvoker != null) {
+                    LoadBalancerCommand.this.listenerInvoker.onExecutionFailed((Throwable)e, context.toFinalExecutionInfo());
+                }
+
+                return Observable.error((Throwable)e);
+            }
+        });
+    }
+
+private Observable<Server> selectServer() {
+        return Observable.create(new Observable.OnSubscribe<Server>() {
+public void call(Subscriber<? super Server> next) {
+        try {
+        Server server = LoadBalancerCommand.this.loadBalancerContext.getServerFromLoadBalancer(LoadBalancerCommand.this.loadBalancerURI, LoadBalancerCommand.this.loadBalancerKey);
+        next.onNext(server);
+        next.onCompleted();
+        } catch (Exception var3) {
+        next.onError(var3);
+        }
+
+        }
+        });
+        }
+
+
+public Server getServerFromLoadBalancer(@Nullable URI original, @Nullable Object loadBalancerKey) throws ClientException {
+        String host = null;
+        int port = -1;
+        if (original != null) {
+        host = original.getHost();
+        }
+
+        if (original != null) {
+        Pair<String, Integer> schemeAndPort = this.deriveSchemeAndPortFromPartialUri(original);
+        port = (Integer)schemeAndPort.second();
+        }
+
+        ILoadBalancer lb = this.getLoadBalancer();
+        if (host == null) {
+        if (lb != null) {
+            //获取负载均衡的服务
+        Server svc = lb.chooseServer(loadBalancerKey);
+        if (svc == null) {
+        throw new ClientException(ErrorType.GENERAL, "Load balancer does not have available server for client: " + this.clientName);
+        }
+
+        host = svc.getHost();
+        if (host == null) {
+        throw new ClientException(ErrorType.GENERAL, "Invalid Server for :" + svc);
+        }
+
+        logger.debug("{} using LB returned Server: {} for request {}", new Object[]{this.clientName, svc, original});
+        return svc;
+        }
+
+        if (this.vipAddresses != null && this.vipAddresses.contains(",")) {
+        throw new ClientException(ErrorType.GENERAL, "Method is invoked for client " + this.clientName + " with partial URI of (" + original + ") with no load balancer configured. Also, there are multiple vipAddresses and hence no vip address can be chosen to complete this partial uri");
+        }
+
+        if (this.vipAddresses == null) {
+        throw new ClientException(ErrorType.GENERAL, this.clientName + " has no LoadBalancer registered and passed in a partial URL request (with no host:port). Also has no vipAddress registered");
+        }
+
+        try {
+        Pair<String, Integer> hostAndPort = this.deriveHostAndPortFromVipAddress(this.vipAddresses);
+        host = (String)hostAndPort.first();
+        port = (Integer)hostAndPort.second();
+        } catch (URISyntaxException var8) {
+        throw new ClientException(ErrorType.GENERAL, "Method is invoked for client " + this.clientName + " with partial URI of (" + original + ") with no load balancer configured.  Also, the configured/registered vipAddress is unparseable (to determine host and port)");
+        }
+        } else {
+        boolean shouldInterpretAsVip = false;
+        if (lb != null) {
+        shouldInterpretAsVip = this.isVipRecognized(original.getAuthority());
+        }
+
+        if (shouldInterpretAsVip) {
+        Server svc = lb.chooseServer(loadBalancerKey);
+        if (svc != null) {
+        host = svc.getHost();
+        if (host == null) {
+        throw new ClientException(ErrorType.GENERAL, "Invalid Server for :" + svc);
+        }
+
+        logger.debug("using LB returned Server: {} for request: {}", svc, original);
+        return svc;
+        }
+
+        logger.debug("{}:{} assumed to be a valid VIP address or exists in the DNS", host, port);
+        } else {
+        logger.debug("Using full URL passed in by caller (not using load balancer): {}", original);
+        }
+        }
+
+        if (host == null) {
+        throw new ClientException(ErrorType.GENERAL, "Request contains no HOST to talk to");
+        } else {
+        return new Server(host, port);
+        }
+        }
+```
+以上就是获取open--fegin获取服务发起请求的逻辑。
