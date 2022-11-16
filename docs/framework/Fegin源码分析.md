@@ -864,6 +864,7 @@ public Server getServerFromLoadBalancer(@Nullable URI original, @Nullable Object
         }
 
         if (shouldInterpretAsVip) {
+            //选择一个服务。
         Server svc = lb.chooseServer(loadBalancerKey);
         if (svc != null) {
         host = svc.getHost();
@@ -888,4 +889,4 @@ public Server getServerFromLoadBalancer(@Nullable URI original, @Nullable Object
         }
         }
 ```
-以上就是获取open--fegin获取服务发起请求的逻辑。
+以上就是获取open-fegin获取服务发起请求的逻辑。
