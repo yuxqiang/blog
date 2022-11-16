@@ -135,7 +135,7 @@ spring:
           uri: lb://demo-tick1
         - id: tick-route2
           filters:
-             - Customer=true #名称保持一直和类型名称
+             - Customer=true #名称保持一直和类名称
             #- StripPrefix=1
           predicates:
             - name: Path
@@ -156,3 +156,7 @@ spring:
 server:
   port: 8081
 ```
+局部过滤器到此结束。
+
+# 全局过滤器
+全局过滤器只需要实现 GlobalFilter 就行 不需要像局部过滤器有严格的规定
