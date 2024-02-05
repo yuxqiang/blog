@@ -416,6 +416,165 @@ com.alibaba.nacos.naming.controllers.InstanceController#list
     }
 ```
 
+1.按照管理员权限查询接口两个
+
+
+spring.application.name=exam-web-server
+server.port=8090
+spring.main.allow-circular-references=true
+
+spring.servlet.multipart.max-file-size=500MB
+spring.servlet.multipart.max-request-size=500MB
+
+dubbo.application.name=exam-web-server
+dubbo.application.version=1
+dubbo.registry.address=zookeeper://localhost:2181
+dubbo.registry.timeout = 60000
+dubbo.service.timeout = 60000
+dubbo.consumer.timeout = 60000
+dubbo.provider.timeout = 60000
+
+
+distributed.lock.registry.address=zookeeper://localhost:2181
+distributed.lock.registry.username=
+distributed.lock.registry.password=
+
+# rabbitmq
+spring.rabbitmq.host= 10.79.174.19
+spring.rabbitmq.port=30007
+spring.rabbitmq.username=guest
+spring.rabbitmq.password=guest
+spring.rabbitmq.virtual-host=/
+spring.rabbitmq.default-exchange=amq.direct
+spring.rabbitmq.exam.web.excange=amq.topic
+spring.rabbitmq.listener.simple.prefetch = 1
+spring.rabbitmq.listener.simple.concurrency = 1
+spring.rabbitmq.listener.simple.max-concurrency = 1
+
+beta.spring.rabbitmq.host=10.79.6.74
+beta.spring.rabbitmq.port=30007
+beta.spring.rabbitmq.username=guest
+beta.spring.rabbitmq.password=guest
+beta.spring.rabbitmq.virtual-host=/
+beta.spring.rabbitmq.default-exchange=amq.direct
+beta.spring.rabbitmq.listener.simple.prefetch = 1
+beta.spring.rabbitmq.listener.simple.concurrency = 1
+beta.spring.rabbitmq.listener.simple.max-concurrency = 1
+
+listen.old.rabbitmq.enable = true
+listen.new.rabbitmq.enable = false
+
+graphite.server=
+graphite.port=
+
+
+# fastdfs
+spring.fastdfs.connect-timeout = 30
+spring.fastdfs.network-timeout = 60
+spring.fastdfs.charset = utf-8
+spring.fastdfs.tracker-servers = 10.79.174.19:10401
+spring.fastdfs.tracker-http-port = 10402
+spring.fastdfs.anti-steal-token = false
+spring.fastdfs.secret-key = 123456
+spring.fastdfs.max-total = 200
+spring.fastdfs.max-total-key = 40
+spring.fastdfs.max-idle = 20
+spring.fastdfs.min-idle = 20
+spring.fastdfs.max-wait-millis = 6000
+spring.fastdfs.pool-size = 20
+
+# redis
+spring.redis.cluster = false
+spring.redis.cluster.nodes = 10.79.174.21:6379
+spring.redis.password=TA6sMiuSRqtTrHB7Amdg
+spring.redis.timeout = 10000ms
+spring.redis.connection-timeout = 2000
+spring.redis.max-attempts = 3
+
+# jedis pool
+spring.jedis.max-total=8
+spring.jedis.max-idle=8
+spring.jedis.block-when-exhausted=true
+spring.jedis.max-wait-millis=-1
+
+server.servlet.context-path=/api/v1/exam
+
+exam.message.queue.exam.submit = zxy-exam-record-member-submit
+exam.message.queue.exam.time.expand = zxy-exam-time-expand
+exam.message.queue.paperinstance.cache = zxy-exam-paperinstance-cache
+exam.message.queue.paperinstance.cache.two = zxy-exam-paperinstance-cache-two
+
+
+sync.paper.access.secret =qpgd6f3LX0hXaikP
+sync.correction.url =http://net.chinamobile.com/exam/web/paper/syncPaperErrorInfo.action
+#生成报错接口token的常量
+sync.correction.token.constant=connectexampaper
+
+#isActive swagger
+swagger.show=false
+
+#sms url
+sms.url = http://127.0.0.1:8083/api/v1/message/sms/send
+
+#自动提交答题记录提交时间2分钟
+exam.record.cache.submit.time = 120000
+
+#xss whiteUrl 不需要进行xss拦截的url (多个url用;隔开)。例如api/v1/training/aaa/aa;api/v1/training/aaa/aa2
+white-url=api/v1/exam/paper-class/paper-manage;api/v1/exam/exam-record/front/submitPaper
+#1.过滤白名单 2.指定拦截url 3.关闭xss
+white-url.config=1
+
+platform.domain=https://test-elearning.csair.com
+
+# encryption key
+aes.key=d8cg8gVakEq9Agup
+
+#Cipher Key
+cipher.key=DES/CBC/PKCS5Padding
+des.key=DES
+encode.key = ZXY12345
+
+#乘务英语生产配置临时文件夹
+elng.uploadTempFile=/opt/nfs/uploadTempFile
+nfs.original.englishvideo=/opt/nfs/original_englishvideo
+nfs.englishvideo=/opt/nfs/englishvideo
+#本地乘务英语测试配置临时文件夹
+#elng.uploadTempFile=D://elng/uploadTempFile/
+#nfs.original.englishvideo=D://elng/original_englishvideo/
+#nfs.englishvideo=D://elng/englishvideo/
+
+##\u751F\u4EA7\u73AF\u5883\u7F34\u8D39\u914D\u7F6E
+#wechat.qr.pay.url= http://10.64.134.19:8084
+#wechat.qr.pay.boe.type.code= GENERAL_ACCOUNT_RECEIPTS
+#wechat.qr.pay.soucre= ZXY
+##app缴费账单请求地址
+#wechat.pre.pay.url = http://fccm.csair.com/payment_page.html
+#wechat.qr.pay.aes.key= d8cg8gVakEq9Agup
+
+#测试环境缴费配置
+wechat.qr.pay.url= http://10.79.7.237:8084
+wechat.qr.pay.boe.type.code= GENERAL_ACCOUNT_RECEIPTS
+
+#外部接口，查询员工图片
+external.exam.photo.api = http://10.79.6.215:8055/service/rs/employee/
+wechat.qr.pay.soucre= ZXY
+wechat.pre.pay.url = http://fccm.csair.com/payment_page_test.html
+wechat.qr.pay.aes.key= d8cg8gVakEq9Agup
+cabin.wechat.qr.pay.soucre= ELNG
+
+ehr.crew.qialification.check.ip =
+wechat.qr.code.pre.pay.api = /fcc/bills/glBoeWithPay/reacquirePrePay
+wechat.qr.code.pay.api = /fcc/bills/glBoeWithPay/createBoe
+
+cabin.switch=1
+hr.switch=1
+hr.sync=true
+hr.sync.external.exam.photo.api=https://hrcenter.csair.com/hrservice/employee/photo
+hr.sync.member.info.jf.sys=ELNG
+hr.sync.public.key=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCe6qqb5YVvZfY2Kx1m2GUm4mWeUVbGM4wtSgJfdAy5rHcote4tsOm3uEI7PfZeXdK6a3aeNWnxO2d4msUihS8LdF4VRBb56MvmRMNPI4oesSLEIim
+hr.sync.member.info.jf.mu=hr-sync
+
+exceed.auth.check.white.urls=/api/v1/exam/cabin/examination/question/update;/api/v1/exam/cabin/examManage/exam-template;/api/v1/exam/error;
 
 
 
