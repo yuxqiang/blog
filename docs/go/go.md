@@ -437,3 +437,40 @@ fmt.Println(msg2)
 }
 }
 ```
+### 使用退出通道
+```Go
+package main
+
+import (
+"fmt"
+"time"
+)
+
+func send(msg chan string) {
+t := time.NewTicker(time.Second * 1)
+for {
+msg <- "i m send a message"
+<-t.C
+}
+
+}
+func main() {
+message := make(chan string)
+stop := make(chan bool)
+go send(message)
+go func() {
+time.Sleep(time.Second * 2)
+fmt.Println("time is up")
+stop <- true
+}()
+for {
+select {
+case <-stop:
+return
+case msg := <-message:
+fmt.Println(msg)
+}
+
+	}
+}
+```
