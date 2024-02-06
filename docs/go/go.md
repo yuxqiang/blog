@@ -507,3 +507,18 @@ fmt.Println("连接成功？？？")
 	fmt.Println("数据库连接成功.....")
 }
 ```
+### 通过go创建web服务器
+``` Go
+package main
+
+import "net/http"
+
+func helloworld(w http.ResponseWriter, r *http.Request) {
+w.Write([]byte("hello world\n"))
+}
+
+func main() {
+http.HandleFunc("/", helloworld)
+http.ListenAndServe(":9090", nil)
+}
+```
