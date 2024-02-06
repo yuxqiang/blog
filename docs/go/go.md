@@ -522,3 +522,66 @@ http.HandleFunc("/", helloworld)
 http.ListenAndServe(":9090", nil)
 }
 ```
+### 通过go创建web客户端
+``` Go
+package main
+
+import (
+"fmt"
+"io"
+"log"
+"net/http"
+)
+
+func main() {
+
+	response, err := http.Get("http://localhost:9090/2/")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s", body)
+}
+```
+### 通过go创建webPost客户端
+``` Go
+package main
+
+import (
+"fmt"
+"io"
+"log"
+"net/http"
+"strings"
+)
+
+func main() {
+
+	//response, err := http.Get("http://localhost:9090/2/")
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//defer response.Body.Close()
+	//body, err := io.ReadAll(response.Body)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//fmt.Printf("%s", body)
+
+	name := strings.NewReader(`{"some":"json"}`)
+	resonpse, err := http.Post("http://localhost:9090/2/", "application/json", name)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resonpse.Body.Close()
+	body, err := io.ReadAll(resonpse.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s", body)
+}
+```
