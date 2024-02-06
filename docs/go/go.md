@@ -210,3 +210,230 @@ func main() {
 }
 
 ```
+### 使用缓冲区拼接字符串
+```Go
+package main
+
+import (
+"bytes"
+"fmt"
+)
+
+func main() {
+
+	var buffer bytes.Buffer
+	for i := 0; i < 500; i++ {
+		buffer.WriteString("11")
+	}
+	fmt.Println(buffer.String())
+}
+```
+### 错误
+```Go
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+
+	content, err := os.ReadFile("1.txt")
+	if err != nil {
+		fmt.Println(err)
+		//panic(err)
+	}
+	fmt.Printf(string(content))
+}
+
+```
+### 创建错误
+```Go
+package main
+
+import (
+"errors"
+"fmt"
+)
+
+func main() {
+
+	err := errors.New("11111")
+	fmt.Println(err)
+	//content, err := os.ReadFile("1.txt")
+	//if err != nil {
+	//	fmt.Println(err)
+	//	//panic(err)
+	//}
+	//fmt.Printf(string(content))
+}
+```
+
+
+### goroutine
+```Go
+package main
+
+import (
+"errors"
+"fmt"
+)
+
+func main() {
+
+	err := errors.New("11111")
+	fmt.Println(err)
+	//content, err := os.ReadFile("1.txt")
+	//if err != nil {
+	//	fmt.Println(err)
+	//	//panic(err)
+	//}
+	//fmt.Printf(string(content))
+}
+```
+```Go
+package main
+
+import (
+fm "fmt"
+"time"
+)
+
+func slowSec(t int) {
+fm.Println("sleep finsher")
+time.Sleep(time.Second * 3)
+
+}
+func main() {
+go slowSec(10)
+fm.Println("11111")
+}
+```
+```Go
+package main
+
+import (
+fm "fmt"
+"time"
+)
+
+func slowSec(t int) {
+fm.Println("sleep finsher")
+time.Sleep(time.Second * 3)
+
+}
+func main() {
+go slowSec(10)
+fm.Println("11111")
+time.Sleep(time.Second * 4)
+}
+```
+### 通道
+```Go
+package main
+
+import (
+"fmt"
+"time"
+)
+
+var c chan string = make(chan string)
+
+func slowSec1() {
+time.Sleep(time.Second * 2)
+c <- "msssss"
+}
+func main() {
+go slowSec1()
+
+	msg := <-c
+	fmt.Println(msg)
+}
+```
+### go的通道发送大小之缓冲通道
+``` Go
+package main
+
+import (
+"fmt"
+"time"
+)
+
+var c chan string = make(chan string, 2)
+
+func slowSec2() {
+for msg := range c {
+fmt.Println(msg)
+
+	}
+}
+func main() {
+c <- "msssss"
+c <- "msssss"
+//c <- "msssss"
+close(c)
+fmt.Println("1111111")
+time.Sleep(time.Second * 2)
+slowSec2()
+//msg := <-c
+//fmt.Println(msg)
+}
+```
+
+### 将通道作为函数参数
+
+```Go
+package main
+
+import "fmt"
+
+//读
+func channelReader(msg <-chan string) {
+msg1 := msg
+fmt.Println(msg1)
+}
+//写
+func channelWrite(msg chan<- string) {
+msg <- "111111"
+
+}
+//可读可写
+func channelWriteReader(msg chan string) {
+msg <- "111111"
+fmt.Println(msg)
+}
+func main() {
+
+}
+```
+### 使用select语句
+```Go
+package main
+
+import (
+"fmt"
+"time"
+)
+
+func ping1(m chan string) {
+time.Sleep(time.Second * 2)
+m <- "1111"
+}
+func ping2(m chan string) {
+time.Sleep(time.Second * 2)
+m <- "2222"
+}
+func main() {
+channel := make(chan string)
+channel1 := make(chan string)
+go ping1(channel)
+go ping2(channel1)
+select {
+case msg := <-channel:
+fmt.Println(msg)
+case msg2 := <-channel1:
+fmt.Println(msg2)
+}
+}
+```
