@@ -474,3 +474,36 @@ fmt.Println(msg)
 	}
 }
 ```
+### go语言链接mysql
+``` Go
+package main
+
+import (
+"database/sql"
+"fmt"
+_ "github.com/go-sql-driver/mysql"
+)
+
+//go get -u github.com/go-sql-driver/mysql
+
+func main() {
+// DSN:Data Source Name
+dsn := "root:Dreamtech%9ZXy@tcp(10.79.174.23:33060)/train"
+//Open  函数只是校验   dsn  的查数是否正确，  并不会连接数据库
+db, err := sql.Open("mysql", dsn)
+if err != nil {
+panic(err)
+}
+//如果  出错了， 就没有 db 会造成 空指针异常
+defer db.Close() // 注意这行代码要写在上面err判断的下面
+fmt.Println("连接成功？？？")
+
+	//尝试与数据库进行连接
+	err = db.Ping()
+	if err != nil {
+		fmt.Println("数据库连接失败", err)
+		return
+	}
+	fmt.Println("数据库连接成功.....")
+}
+```
