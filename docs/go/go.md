@@ -585,3 +585,157 @@ func main() {
 	fmt.Printf("%s", body)
 }
 ```
+
+### httpdebug
+``` Go
+package main
+
+import (
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httputil"
+)
+
+func main() {
+	debug := "1"
+	client := &http.Client{}
+	request, error := http.NewRequest("GET", "http://localhost:9090/2/", nil)
+	if error != nil {
+		log.Fatal(error)
+	}
+	if debug == "1" {
+		debugRequest, error := httputil.DumpRequest(request, true)
+		if error != nil {
+			log.Fatal(error)
+		}
+		fmt.Printf("%s", debugRequest)
+	}
+	response, error := client.Do(request)
+	defer response.Body.Close()
+	if debug == "1" {
+		debugResponse, error := httputil.DumpResponse(response, true)
+		if error != nil {
+			log.Fatal(error)
+		}
+		fmt.Printf("%s", debugResponse)
+	}
+	body, error := io.ReadAll(response.Body)
+	if error != nil {
+		log.Fatal(error)
+	}
+	fmt.Printf("%s", body)
+}
+
+```
+
+### 使用json
+``` Go
+package main
+
+import (
+"encoding/json"
+"fmt"
+"log"
+)
+
+type Person struct {
+Name    string   `json:"name"`
+Age     int      `json:"age",omitempty`
+Hobbies []string `json:"hobbies"`
+}
+
+func main() {
+hobbies := []string{"1", "2", "3"}
+p := Person{
+Name:    "1111",
+Hobbies: hobbies,
+}
+res, error := json.Marshal(p)
+if error != nil {
+log.Fatal(error)
+}
+fmt.Printf("%s", res)
+fmt.Printf("%+v\n", p)
+}
+```
+
+### 使用json解码
+```Go
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+)
+
+type Person struct {
+	Name    string   `json:"name"`
+	Age     int      `json:"age",omitempty`
+	Hobbies []string `json:"hobbies"`
+}
+
+func main() {
+	hobbies := []string{"1", "2", "3"}
+	p := Person{
+		Name:    "1111",
+		Hobbies: hobbies,
+	}
+	res, error := json.Marshal(p)
+	if error != nil {
+		log.Fatal(error)
+	}
+	jsonData := `{"name":"1111","age":0,"hobbies":["1","2","3"]}`
+	p2 := Person{}
+	jsonByte := []byte(jsonData)
+	json.Unmarshal(jsonByte, &p2)
+	fmt.Printf("%s", res)
+	fmt.Printf("%+v\n", p)
+	fmt.Printf("%+v\n", p2)
+}
+
+```
+### 使用file
+```Go
+package main
+
+import (
+"fmt"
+"log"
+"os"
+)
+
+func main() {
+
+	response, error := os.ReadFile("ceshi.txt")
+	os.WriteFile("ceshi11.txt", []byte{}, 0777)
+	if error != nil {
+		log.Fatal(error)
+	}
+	fmt.Printf(string(response))
+}
+```
+### 使用时间
+```Go
+package main
+
+import (
+"fmt"
+"log"
+"time"
+)
+
+func main() {
+	time3, error := time.Parse(time.RFC3339, time.Now().String())
+	if error != nil {
+		log.Fatal(error)
+	}
+	time3.Add(time.Hour)
+	time3.Sub(time3).Hours()
+	fmt.Println(time3)
+	fmt.Println(fmt.Println(time3))
+}
+```
+
