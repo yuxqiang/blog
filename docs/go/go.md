@@ -738,4 +738,12 @@ func main() {
 	fmt.Println(fmt.Println(time3))
 }
 ```
+source ~/.bash_profile
+
+_SSO_T_22935@csair.com
+yq123456@@@@
+    <property name="url" value="jdbc:mysql://119.91.157.188:3306/nacos?useUnicode=true"/>
+                <property name="username" value="root"/>
+                <property name="password" value="yuqiang@1234"/>
+
 
